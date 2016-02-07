@@ -1,0 +1,239 @@
+---
+title: "Raport z analizy danych PDB"
+author: "Maciej Łuczak 100908"
+date: "`r format(Sys.time(), '%d.%m.%Y')`"
+output: 
+  html_document: 
+    keep_md: yes
+    theme: united
+    toc: yes
+---
+
+Ładowanie bibliotek
+---
+```{r biblioteki, warning=FALSE, message=FALSE}
+library(knitr)
+library(dplyr)
+library(psych)
+library(reshape2)
+library(ggplot2)
+library(gridExtra)
+library(caret)
+library(pls)
+```
+
+Powtarzalność raportu
+---
+```{r powtarzalność}
+set.seed(23)
+```
+
+Wczytywanie danych
+---
+```{r dane, cache=TRUE}
+rt <- read.table("all_summary.txt",header = TRUE, sep = ";", comment.char = "")
+```
+
+Usuwanie danych z błędnym res_name
+---
+```{r usuwanie błędnych res_name, cache=TRUE}
+filtered1 <- rt %>%
+       filter(!is.na(res_name)) %>%
+       filter(!is.nan(res_name)) %>%
+       filter(res_name != "DA",res_name !="DC",res_name !="DT", res_name !="DU",res_name != "DG", res_name !="DI",res_name !="UNK", res_name !="UNX", res_name !="UNL", res_name !="PR", res_name !="PD", res_name !="Y1", res_name !="EU", res_name !="N", res_name !="15P", res_name !="UQ", res_name !="PX4")
+```
+
+Usuwanie duplikatów par (pdb_code, res_name)
+---
+```{r usuwanie duplikatów pdb_code i res_name, cache=TRUE}
+distinct <- filtered1 %>% distinct(pdb_code, res_name)
+```
+
+Podsumowanie wartości w kolumnach
+---
+```{r podsumowanie wartosci, cache=TRUE}
+knitr::kable(summary(distinct))
+```
+
+Korelacja między kolumnami
+---
+```{r wybranie kolumn nie part i numerycznych, cache=TRUE}
+no_part_columns <- select(distinct, -starts_with("part"))
+nemericTab <- no_part_columns[,sapply(no_part_columns, is.numeric)]
+corColumns <- select(nemericTab, one_of(c("local_volume", "local_electrons", "local_mean" ,"local_std", "local_max", "local_skewness","local_parts")))
+```
+```{r korelacja}
+corelationTable <- cor(corColumns, use="complete.obs")
+```
+```{r korelacja widok}
+knitr::kable(corelationTable)
+cor.plot(mat.sort(corelationTable),TRUE,zlim=c(0,1), main="korelacja")
+```
+
+Liczebność klas res_name
+---
+```{r liczebność klas res_name}
+uniqRes_name <- group_by(distinct,res_name)
+summarise(uniqRes_name, count=n())
+```
+
+Rozkład liczby elektronów i liczby atomów
+---
+```{r wykres liczby atomów i elektronów}
+atomy <- ggplot2::ggplot(distinct, aes(local_res_atom_non_h_count)) + ggplot2::geom_histogram(binwidth = 1) +ggplot2::ggtitle("Rozkład liczby atomów")
+elektrony <- ggplot2::ggplot(distinct, aes(local_res_atom_non_h_electron_sum)) + ggplot2::geom_histogram(binwidth = 5) +ggplot2::ggtitle("Rozkład liczby elektronów")
+```
+```{r , echo=FALSE}
+atomy
+```
+```{r , echo=FALSE}
+elektrony
+```
+
+Wykres
+---
+```{r odtwarzanie wykresu, warning=FALSE, message=FALSE}
+wykres <- ggplot2::ggplot(distinct, aes(x=local_res_atom_non_h_electron_sum, y=local_res_atom_non_h_count))
+wykres <- wykres + ggplot2::stat_density_2d(geom = "tile", aes(fill = ..density..), contour = FALSE)
+wykres <- wykres + ggplot2::scale_fill_distiller(palette = "Spectral")+ ggplot2::scale_x_continuous(breaks=seq(100,601,100)) + ggplot2::scale_y_continuous(breaks=seq(20,101,20)) 
+wykres <- wykres + ggplot2::theme(legend.position = "none", axis.title.x = element_blank() , axis.title.y = element_blank(), plot.background = element_blank(), 
+panel.border = element_blank(), 
+panel.background = element_blank())
+wykres <- wykres + ggplot2::ylim(0,100)+ggplot2::xlim(0,650)
+
+
+themeEmpt <- ggplot2::theme(                              
+plot.background = element_blank(), 
+panel.grid.major = element_blank(), 
+panel.grid.minor = element_blank(), 
+panel.border = element_blank(), 
+panel.background = element_blank(),
+axis.title.x = element_blank(),
+axis.title.y = element_blank(),
+axis.text.x = element_blank(),
+axis.text.y = element_blank(),
+axis.ticks = element_blank()
+)
+
+empty <- ggplot2::ggplot()+ggplot2::geom_point(aes(1,1), color="white") + themeEmpt
+```
+```{r dalej odtwarzanie}
+atomy <- ggplot2::ggplot(distinct, aes(local_res_atom_non_h_count, fill="red", color="black")) + ggplot2::geom_histogram(binwidth = 1)+ggplot2::coord_flip()+ themeEmpt + 
+ggplot2::theme(legend.position = "none")
+
+elektrony <- ggplot2::ggplot(distinct, aes(local_res_atom_non_h_electron_sum, fill="red", color="black")) + ggplot2::geom_histogram(binwidth = 5)+ themeEmpt + 
+ggplot2::theme(legend.position = "none")
+
+grid.arrange(elektrony, empty, wykres, atomy, ncol=2, nrow=2, widths=c(4, 1), heights=c(1, 4))
+
+```
+
+Tabele pokazujące po 10 klas z największą niezgodnością atomów i elektronów.
+---
+```{r tabele niezgodności atomóW i elektronów}
+niezgodnosc_atomow <- distinct %>% filter(!is.na(dict_atom_non_h_count)) %>% mutate(niezg_atomy = dict_atom_non_h_count-local_res_atom_non_h_count) %>% group_by(res_name) %>% summarise(
+        count = n(),
+        srednia_niezgodnosc_atomy=mean(niezg_atomy)) %>% arrange(desc(srednia_niezgodnosc_atomy))
+
+knitr::kable(head(niezgodnosc_atomow,10))
+
+niezgodnosc_elektronow <- distinct %>% filter(!is.na(dict_atom_non_h_electron_sum)) %>% mutate(niezg_elektrony = dict_atom_non_h_electron_sum - local_res_atom_non_h_electron_sum) %>% group_by(res_name) %>% summarise(
+        count = n(),
+        srednia_niezgodnosc_elektrony=mean(niezg_elektrony)) %>% arrange(desc(srednia_niezgodnosc_elektrony))
+
+knitr::kable(head(niezgodnosc_elektronow,10))
+```
+
+Rozkład wartości kolumn zaczynających się od part_01 z średnią wartośią
+---
+```{r rozkład wartości kolumn part_01, message=FALSE, warning=FALSE, cache=TRUE}
+part_01_columns <- select(distinct, starts_with("part_01"))
+
+ HistsPlots <- function(var1) {
+     mean_part <- mean(part_01_columns[,var1], na.rm=T)
+     print( ggplot(data = part_01_columns,
+     aes(part_01_columns[,var1]),
+     environment = environment()) + geom_histogram() 
+     +geom_vline(aes(xintercept=mean(part_01_columns[,var1], na.rm=T)),
+               color="red", linetype="dashed", size=1) 
+     + geom_text(aes(mean_part,0,label = round(mean_part,2), vjust = -1))
+     + labs(title=var1, x=element_blank(), y="count"))
+ }
+```
+
+```{r rysowanie rozkładów wartości kolumn part_01, message=FALSE, warning=FALSE, results='hide'}
+mapply(HistsPlots, var1=names(part_01_columns))
+```
+
+Regresja liczby atomów i elektronów
+---
+```{r regresja przygotowanie, warning=FALSE}
+distinctTmp <- distinct %>% filter(!is.na(local_res_atom_non_h_count)) %>%
+  filter(!is.na(local_res_atom_non_h_electron_sum)) %>% filter(!is.nan(local_res_atom_non_h_count)) %>%
+  filter(!is.nan(local_res_atom_non_h_electron_sum))
+
+distinctRegr <- distinctTmp %>% select(local_res_atom_non_h_count,
+                                      part_00_blob_electron_sum:part_00_density_sqrt_E3)
+RegrAtom <- distinctRegr[complete.cases(distinctRegr),]
+
+distinctRegr <- distinctTmp %>% select(local_res_atom_non_h_electron_sum,
+                                      part_00_blob_electron_sum:part_00_density_sqrt_E3)
+RegrElektron <- distinctRegr[complete.cases(distinctRegr),]
+```
+
+Regresja liczby atomów
+
+```{r regresja atom, warning=FALSE}
+inTraining <- createDataPartition(y=RegrAtom$local_res_atom_non_h_count, p= .75, list = FALSE)
+training <- RegrAtom[  inTraining,]
+testing <- RegrAtom[ -inTraining,]
+fit <- train(local_res_atom_non_h_count ~ . ,
+             data = training,
+             method = "lm")
+fit
+predictedVal <- predict(fit, newdata = na.omit(testing))
+modelvalues<-data.frame(obs = testing$local_res_atom_non_h_count, pred=predictedVal)
+defaultSummary(modelvalues)
+```
+
+Regresja liczby elektronów
+
+```{r regresj elektronóW, warning=FALSE}
+inTraining <- createDataPartition(y=RegrElektron$local_res_atom_non_h_electron_sum, p= .75, list = FALSE)
+training <- RegrElektron[  inTraining,]
+testing <- RegrElektron[ -inTraining,]
+fit <- train(local_res_atom_non_h_electron_sum ~ . ,
+             data = training,
+             method = "lm")
+fit
+predictedVal <- predict(fit, newdata = na.omit(testing))
+modelvalues<-data.frame(obs = testing$local_res_atom_non_h_electron_sum, pred=predictedVal)
+defaultSummary(modelvalues)
+```
+
+
+```{r klasyfikacja res_name, echo=FALSE, eval=FALSE}
+distinctTmp <- distinct %>% filter(!is.na(res_name)) %>% filter(!is.nan(res_name)) %>%
+  group_by(res_name) %>% summarise(count =n()) %>% filter(count>20)
+distinctNowe <- distinct %>% subset(res_name %in% distinctTmp$res_name) %>% filter(!is.na(res_name)) %>% filter(!is.nan(res_name))
+
+distinctKlas <- distinctNowe %>% select(res_name, part_00_blob_electron_sum:part_00_density_sqrt_E3)
+Klasyfik <- distinctKlas[complete.cases(distinctKlas),]
+summary(Klasyfik)
+inTraining <- createDataPartition(y=distinctTmp$res_name, p= .3, list = FALSE)
+kable(inTraining)
+training <- Klasyfik[  inTraining,]
+testing <- Klasyfik[ -inTraining,]
+kable(summary(training))
+levels(Klasyfik)
+levels(training)
+levels(testing)
+#gridCtrl <- trainControl(
+#    method = "cv",
+#    number = 2)
+#fitTune <- train(res_name ~ .,
+#             data = training,
+#             method = "pls",
+#             preProc = c("center", "scale"))
+#fitTune
+```
