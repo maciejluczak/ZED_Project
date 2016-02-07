@@ -1,6 +1,6 @@
 # Raport z analizy danych PDB
 Maciej Łuczak 100908  
-`r format(Sys.time(), '%d.%m.%Y')`  
+07-02-2016  
 
 Ładowanie bibliotek
 ---
